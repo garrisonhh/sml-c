@@ -69,6 +69,17 @@ void sml_unload(sml_document_t *);
 void sml_print(sml_document_t *);
 void sml_fprint(sml_document_t *, FILE *file);
 
+/*
+SML_FOREACH can be used to traverse data structures easily, for example:
+sml_attribute_t *attrib = ...;
+sml_value_t *value;
+
+SML_FOREACH(value, attrib->values) {
+    // do whatever with value
+}
+*/
+#define SML_FOREACH(item, start_node) for (item = start_node; item; item = item->next)
+
 #ifdef SML_IMPL
 
 #include <stdlib.h>
@@ -174,10 +185,15 @@ static void sml_fprintf_level(FILE *file, int level, const char *msg, bool newli
 static void sml_fprintf_lower(FILE *file, sml_element_t *root, int level) {
     sml_fprintf_level(file, level, root->name, true);
 
-    for (sml_attribute_t *attrib = root->attributes; attrib; attrib = attrib->next) {
+    // traverse attributes
+    sml_attribute_t *attrib;
+
+    SML_FOREACH(attrib, root->attributes) {
+        sml_value_t *value;
+
         sml_fprintf_level(file, level + 1, attrib->name, false);
 
-        for (sml_value_t *value = attrib->values; value; value = value->next) {
+        SML_FOREACH(value, attrib->values) {
             fprintf(file, " ");
 
             switch (value->type) {
@@ -206,8 +222,11 @@ static void sml_fprintf_lower(FILE *file, sml_element_t *root, int level) {
         fprintf(file, "\n");
     }
 
-    for (sml_element_t *elem = root->elements; elem; elem = elem->next)
-        sml_fprintf_lower(file, elem, level + 1);
+    // traverse elements
+    sml_element_t *element;
+
+    SML_FOREACH(element, root->elements)
+        sml_fprintf_lower(file, element, level + 1);
 
     sml_fprintf_level(file, level, "end", true);
 }
