@@ -1,4 +1,8 @@
 Makefile
-massif**
-vg**
 sml
+
+# callgrind output
+massif*
+cachegrind*
+callgrind*
+vgcore*
