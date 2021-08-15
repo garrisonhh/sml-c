@@ -65,12 +65,30 @@ void sml_fprint(sml_document_t *, FILE *file);
 #include <stdbool.h>
 #include <string.h>
 
-// TODO allow for user replacements for memory stuff, like malloc/realloc/free, buffer sizes...
-
+// buffer sizes
+#ifndef SML_FREAD_BUF_SIZE
 #define SML_FREAD_BUF_SIZE 4096
+#endif
+#ifndef SML_ALLOCATOR_PAGE
 #define SML_ALLOCATOR_PAGE 4096
+#endif
+#ifndef SML_MAX_TOKENS_PER_LINE
 #define SML_MAX_TOKENS_PER_LINE 256
+#endif
+#ifndef SML_MAX_TREE_DESCENT
 #define SML_MAX_TREE_DESCENT 256
+#endif
+
+// custom allocators
+#ifndef SML_MALLOC
+#define SML_MALLOC(size) malloc(size)
+#endif
+#ifndef SML_REALLOC
+#define SML_REALLOC(ptr, size) realloc(ptr, size)
+#endif
+#ifndef SML_FREE
+#define SML_FREE(ptr) free(ptr)
+#endif
 
 #define SML_ERROR(...)\
     do {\
@@ -101,12 +119,12 @@ void sml_load(sml_document_t *doc, const char *filename) {
 }
 
 void sml_unload(sml_document_t *doc) {
-    free(doc->text);
+    SML_FREE(doc->text);
 
     for (size_t i = 0; i < doc->pages; ++i)
-        free(doc->allocated[i]);
+        SML_FREE(doc->allocated[i]);
 
-    free(doc->allocated);
+    SML_FREE(doc->allocated);
 }
 
 // because elements, attributes, and values are allocated all in one loop and
@@ -118,10 +136,13 @@ static void *sml_alloc(sml_document_t *doc, size_t bytes) {
     if (bytes + doc->size_used > SML_ALLOCATOR_PAGE) {
         if (doc->pages + 1 > doc->alloc_pages) {
             doc->alloc_pages <<= 1;
-            doc->allocated = realloc(doc->allocated, doc->alloc_pages * sizeof(*doc->allocated));
+            doc->allocated = SML_REALLOC(
+                doc->allocated,
+                doc->alloc_pages * sizeof(*doc->allocated)
+            );
         }
 
-        doc->allocated[doc->pages++] = malloc(SML_ALLOCATOR_PAGE);
+        doc->allocated[doc->pages++] = SML_MALLOC(SML_ALLOCATOR_PAGE);
         doc->size_used = 0;
     }
 
@@ -213,7 +234,7 @@ static char *sml_read_file(const char *filename) {
         size_t last_len = text_len;
 
         text_len += num_read;
-        text = realloc(text, text_len);
+        text = SML_REALLOC(text, text_len);
 
         memcpy(text + last_len, buffer, num_read * sizeof(*buffer));
     };
