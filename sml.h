@@ -1,6 +1,7 @@
 #ifndef SML_H
 #define SML_H
 
+#include <stdio.h>
 #include <stddef.h>
 
 typedef struct sml_value sml_value_t;
@@ -50,15 +51,17 @@ typedef struct sml_document {
     size_t size_used; // used on current page
 } sml_document_t;
 
+// sml_load generates a valid tree for parsing, sml_unload frees it.
 void sml_load(sml_document_t *, const char *filename);
 void sml_unload(sml_document_t *);
 
+// pretty-printers (should) produce valid SML equivalent to original document
 void sml_print(sml_document_t *);
+void sml_fprint(sml_document_t *, FILE *file);
 
 #ifdef SML_IMPL
 
 #include <stdlib.h>
-#include <stdio.h>
 #include <stdbool.h>
 #include <string.h>
 
@@ -88,9 +91,7 @@ void sml_print(sml_document_t *);
 static void sml_parse(sml_document_t *doc, const char *filename);
 
 void sml_load(sml_document_t *doc, const char *filename) {
-    *doc = (sml_document_t){
-        .text = NULL
-    };
+    *doc = (sml_document_t){ .text = NULL };
 
     doc->alloc_pages = 2;
     doc->allocated = malloc(doc->alloc_pages * sizeof(*doc->allocated));
@@ -108,6 +109,11 @@ void sml_unload(sml_document_t *doc) {
     free(doc->allocated);
 }
 
+// because elements, attributes, and values are allocated all in one loop and
+// freed all at once, sml-c only malloc's large blocks (specified by
+// SML_ALLOCATOR_PAGE) when necessary and generally is able to just hand over a
+// chunk of memory when necessary. this is a fat speed increase and has the
+// side effect of producing more cache-friendly linked lists.
 static void *sml_alloc(sml_document_t *doc, size_t bytes) {
     if (bytes + doc->size_used > SML_ALLOCATOR_PAGE) {
         if (doc->pages + 1 > doc->alloc_pages) {
@@ -126,57 +132,60 @@ static void *sml_alloc(sml_document_t *doc, size_t bytes) {
     return ptr;
 }
 
-static void sml_print_doc_lower(sml_element_t *root, int level) {
-#define SML_PRINT_LVL(lvl)\
-    for (size_t i = 0; i < (lvl) * 2; ++i)\
-        putchar(' ');
+// prints tree spacing
+static void sml_fprintf_level(FILE *file, int level, const char *msg, bool newline) {
+    fprintf(file, "%*s%s", level * 2, "", msg);
 
-    SML_PRINT_LVL(level);
-    printf("%s\n", root->name);
+    if (newline)
+        fprintf(file, "\n");
+}
+
+static void sml_fprintf_lower(FILE *file, sml_element_t *root, int level) {
+    sml_fprintf_level(file, level, root->name, true);
 
     for (sml_attribute_t *attrib = root->attributes; attrib; attrib = attrib->next) {
-        SML_PRINT_LVL(level + 1);
-        printf(attrib->name);
+        sml_fprintf_level(file, level + 1, attrib->name, false);
 
         for (sml_value_t *value = attrib->values; value; value = value->next) {
-            putchar(' ');
+            fprintf(file, " ");
 
             switch (value->type) {
             case SML_STRING:
-                printf(value->value.str);
+                // TODO escaped characters in lines aren't handled properly
+                fprintf(file, value->value.str);
                 break;
             case SML_FLOAT:
-                printf("%f", value->value.f);
+                fprintf(file, "%f", value->value.f);
                 break;
             case SML_INT:
-                printf("%ld", value->value.i);
+                fprintf(file, "%ld", value->value.i);
                 break;
             case SML_TRUE:
-                printf("true");
+                fprintf(file, "true");
                 break;
             case SML_FALSE:
-                printf("false");
+                fprintf(file, "false");
                 break;
             case SML_NULL:
-                printf("-");
+                fprintf(file, "-");
                 break;
             }
         }
 
-        putchar('\n');
+        fprintf(file, "\n");
     }
 
     for (sml_element_t *elem = root->elements; elem; elem = elem->next)
-        sml_print_doc_lower(elem, level + 1);
+        sml_fprintf_lower(file, elem, level + 1);
 
-    SML_PRINT_LVL(level);
-    puts("end");
-
-#undef SML_PRINT_LVL
+    sml_fprintf_level(file, level, "end", true);
 }
 
-void sml_print(sml_document_t *doc) {
-    sml_print_doc_lower(doc->root, 0);
+// print functions should produce valid equivalent SML to the original document
+void sml_print(sml_document_t *doc) { sml_fprintf_lower(stdout, doc->root, 0); }
+
+void sml_fprint(sml_document_t *doc, FILE *file) {
+    sml_fprintf_lower(file, doc->root, 0);
 }
 
 static char *sml_read_file(const char *filename) {
@@ -236,11 +245,19 @@ static bool sml_is_end(const char *str) {
     return true;
 }
 
+// parses floating point + integer values
 static bool sml_parse_num(sml_value_t *value) {
+    char *trav = (char *)value->value.str;
     long num = 0;
     double dot_div = 0.0;
+    bool negative = false;
 
-    for (char *trav = (char *)value->value.str; *trav; ++trav) {
+    // negative sign
+    if ((negative = (*trav == '-')))
+        ++trav;
+
+    // parse numbers
+    while (*trav) {
         if (*trav >= '0' && *trav <= '9') {
             num *= 10;
             num += *trav - '0';
@@ -250,8 +267,14 @@ static bool sml_parse_num(sml_value_t *value) {
         } else {
             return false;
         }
+
+        ++trav;
     }
 
+    if (negative)
+        num = -num;
+
+    // see if there was a dot, if so divide and return float otherwise int
     if (dot_div) {
         value->type = SML_FLOAT;
         value->value.f = (double)num / dot_div;
@@ -263,6 +286,8 @@ static bool sml_parse_num(sml_value_t *value) {
     return true;
 }
 
+// parses unquoted + quoted strings
+// TODO add stricter checks for allowed characters, etc
 static bool sml_parse_string(sml_value_t *value) {
     char *str = (char *)value->value.str;
 
@@ -289,6 +314,7 @@ static bool sml_parse_string(sml_value_t *value) {
     return true;
 }
 
+// determine SML type of a value, errors out if type isn't valid
 static void sml_parse_value(sml_value_t *value) {
     const char *str = value->value.str;
 
@@ -303,11 +329,7 @@ static void sml_parse_value(sml_value_t *value) {
 }
 
 // TODO this produces "reversed" lists, is it worth fixing?
-#define SML_LINKEDLIST_PUSH(root, item)\
-    do {\
-        item->next = root;\
-        root = item;\
-    } while (0)
+#define SML_LINKEDLIST_PUSH(root, item) do { item->next = root; root = item; } while (0)
 
 static void sml_parse(sml_document_t *doc, const char *filename) {
     doc->text = sml_read_file(filename);
