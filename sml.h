@@ -132,11 +132,11 @@ static void sml_print_doc_lower(sml_element_t *root, int level) {
         putchar(' ');
 
     SML_PRINT_LVL(level);
-    printf("<E> %s\n", root->name);
+    printf("%s\n", root->name);
 
     for (sml_attribute_t *attrib = root->attributes; attrib; attrib = attrib->next) {
         SML_PRINT_LVL(level + 1);
-        printf("<A> %s", attrib->name);
+        printf(attrib->name);
 
         for (sml_value_t *value = attrib->values; value; value = value->next) {
             putchar(' ');
@@ -302,6 +302,7 @@ static void sml_parse_value(sml_value_t *value) {
         SML_ERROR("unknown token: \"%s\"\n", str);
 }
 
+// TODO this produces "reversed" lists, is it worth fixing?
 #define SML_LINKEDLIST_PUSH(root, item)\
     do {\
         item->next = root;\
