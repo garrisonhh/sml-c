@@ -232,7 +232,9 @@ static void sml_fprintf_lower(FILE *file, sml_element_t *root, int level) {
 }
 
 // print functions should produce valid equivalent SML to the original document
-void sml_print(sml_document_t *doc) { sml_fprintf_lower(stdout, doc->root, 0); }
+void sml_print(sml_document_t *doc) {
+    sml_fprintf_lower(stdout, doc->root, 0);
+}
 
 void sml_fprint(sml_document_t *doc, FILE *file) {
     sml_fprintf_lower(file, doc->root, 0);
